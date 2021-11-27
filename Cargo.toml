@@ -1,0 +1,16 @@
+[package]
+name = "einride-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.49"
+opencv = "0.61.0"
+serde_json = "1"
+websocket = "0.26.2"
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
