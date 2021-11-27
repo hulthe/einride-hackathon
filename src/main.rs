@@ -1,42 +1,31 @@
+mod ws;
+mod dead_mans;
+mod gui;
+mod track;
+
 use opencv::core::{bitwise_and, in_range, ElemMul, Mat, MatTrait, Vector, CV_64FC1, CV_8UC3};
-use opencv::cvv::{show_image, CallMetaData};
 use opencv::features2d::{
     draw_keypoints, DrawMatchesFlags, Feature2DTrait, SimpleBlobDetector, SimpleBlobDetector_Params,
 };
 use opencv::imgproc::{cvt_color, threshold, COLOR_RGB2BGR, COLOR_RGB2HSV, THRESH_BINARY};
 use opencv::prelude::VideoCaptureTrait;
 use opencv::videoio::{VideoCapture, CAP_FFMPEG};
-use serde::Serialize;
-use websocket::client::builder::ClientBuilder;
-use websocket::sender::Sender;
-use websocket::ws::sender::Sender as SenderTrait;
-use websocket::Message;
+
+use opencv::highgui;
 
 const IMG_W: i32 = 160;
 const IMG_H: i32 = 120;
 
-#[derive(Debug, Serialize)]
-struct Command {
-    angle: f64,
-    throttle: f64,
-    drive_mode: &'static str,
-    recording: bool,
-}
-
-impl Default for Command {
-    fn default() -> Self {
-        Command {
-            angle: 0.0,
-            throttle: 0.0,
-            drive_mode: "user",
-            recording: false,
-        }
-    }
-}
 
 fn main() -> anyhow::Result<()> {
-    let mut ws = ClientBuilder::new("ws://192.168.81.154:8887/wsDrive")?.connect_insecure()?;
     let mut cap = VideoCapture::from_file("http://192.168.81.154:8887/video", CAP_FFMPEG)?;
+    let ws = ws::connect_ws()?;
+    let ws = dead_mans::start_dms(ws)?;
+
+    const WINDOW_NAME: &str = "video";
+
+    highgui::named_window(WINDOW_NAME, 0)?;
+
 
     let mut frame = Mat::default();
 
@@ -55,7 +44,10 @@ fn main() -> anyhow::Result<()> {
     let light_red: Vector<u8> = vec![0, 0, 0].into();
 
     loop {
-        let got_frame = cap.read(&mut frame)?;
+        if !cap.read(&mut frame)? {
+            println!("no more frames");
+            return Ok(());
+        }
 
         let mut frame_bgr = Mat::default();
         cvt_color(&frame, &mut frame_bgr, COLOR_RGB2BGR, 0)?;
@@ -90,32 +82,19 @@ fn main() -> anyhow::Result<()> {
             .filter(|&(_, y)| y > IMG_H / 2)
             .next();
 
-        let mut cmd = Command::default();
+        let mut cmd = ws::Command::default();
         if let Some((x, _y)) = best_point {
             let x_from_mid = IMG_W / 2 - x;
             cmd.angle = (x_from_mid as f64) / (IMG_W / 2) as f64;
-            cmd.throttle = 0.00;
-            println!("angle: {}, throttle: {}", cmd.angle, cmd.throttle);
+            cmd.throttle = 0.20;
+            eprintln!("angle: {}, throttle: {}", cmd.angle, cmd.throttle);
         } else {
-            println!("no points found");
+            eprintln!("no points found");
         }
-        let cmd = serde_json::to_string(&cmd)?;
+        ws.send(cmd)?;
 
-        let msg = Message::text(&cmd);
-        let mut sender = Sender::new(true);
-        let mut buf = Vec::new();
-        sender.send_message(&mut buf, &msg)?;
-        ws.writer_mut().write_all(&buf)?;
-
-        //show_image(&frame, &CallMetaData::default()?, "frame", "blah")?;
-        //show_image(&frame_hsv, &CallMetaData::default()?, "hsv", "blah")?;
-        //show_image(&masked, &CallMetaData::default()?, "masked", "blah")?;
-        //show_image(&thresh, &CallMetaData::default()?, "thresholded", "blah")?;
-        //show_image(
-        //    &img_w_keypoints,
-        //    &CallMetaData::default()?,
-        //    "w_keypoints",
-        //    "blah",
-        //)?;
+        highgui::imshow(WINDOW_NAME, &img_w_keypoints)?;
+        highgui::wait_key(50)?;
+        //std::thread::sleep(std::time::Duration::from_millis(50))
     }
 }
